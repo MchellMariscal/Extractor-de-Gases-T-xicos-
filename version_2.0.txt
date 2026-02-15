@@ -1,0 +1,131 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// Pines sensores
+const int mq7Pin = A0;
+const int mq6Pin = A1;
+const int mq4Pin = A2;
+
+// Pines MOSFET para heaters
+const int heaterMQ7 = 7;
+const int heaterMQ6 = 10;
+const int heaterMQ4 = 11;
+
+// Pines de salida
+const int buzzerPin = 8; // ahora solo para tone(), no PWM
+const int relayPin = 9;
+
+// Umbrales de seguridad
+const int umbralCO = 3;
+const int umbralLPG = 3;
+const int umbralMetano = 3;
+
+// Variables para temporización
+unsigned long tiempoInicioMQ7 = 0;
+unsigned long tiempoInicioPreheat = 0;
+bool enMedicionMQ7 = false;
+bool preheatCompleto = false;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(heaterMQ7, OUTPUT);
+  pinMode(heaterMQ6, OUTPUT);
+  pinMode(heaterMQ4, OUTPUT);
+  pinMode(buzzerPin, OUTPUT);
+  pinMode(relayPin, OUTPUT);
+
+  digitalWrite(heaterMQ7, LOW);
+  digitalWrite(heaterMQ6, LOW);
+  digitalWrite(heaterMQ4, LOW);
+  digitalWrite(buzzerPin, LOW);
+  digitalWrite(relayPin, LOW);
+
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Iniciando...");
+  lcd.setCursor(0, 1);
+  lcd.print("Precalentando...");
+
+  // Encender heaters para precalentamiento
+  digitalWrite(heaterMQ7, HIGH);
+  digitalWrite(heaterMQ6, HIGH);
+  digitalWrite(heaterMQ4, HIGH);
+
+  tiempoInicioPreheat = millis();
+  tiempoInicioMQ7 = millis();
+}
+
+void loop() {
+  unsigned long ahora = millis();
+
+  // Manejo del precalentamiento
+  if (!preheatCompleto && ahora - tiempoInicioPreheat >= 60000) { // 60s
+    preheatCompleto = true;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Sistema listo");
+    digitalWrite(heaterMQ6, HIGH); // continuo
+    digitalWrite(heaterMQ4, HIGH); // continuo
+  }
+
+  // Ciclo MQ7: 60s HIGH, 90s PWM bajo
+  unsigned long elapsedMQ7 = ahora - tiempoInicioMQ7;
+  if (elapsedMQ7 < 60000) {
+    digitalWrite(heaterMQ7, HIGH);
+    enMedicionMQ7 = false;
+  } else if (elapsedMQ7 < 150000) {
+    analogWrite(heaterMQ7, 56); // PWM bajo ~1.4V (OK)
+    enMedicionMQ7 = true;
+  } else {
+    tiempoInicioMQ7 = ahora; // reinicia ciclo
+  }
+
+  // Leer sensores solo si precalentamiento completo
+  int valorCO = 0, valorLPG = 0, valorMetano = 0;
+  if (preheatCompleto) {
+    valorCO = analogRead(mq7Pin);
+    valorLPG = analogRead(mq6Pin);
+    valorMetano = analogRead(mq4Pin);
+  }
+
+  Serial.print("CO: "); Serial.print(valorCO);
+  Serial.print(" | LPG: "); Serial.print(valorLPG);
+  Serial.print(" | Metano: "); Serial.println(valorMetano);
+
+  // Verificar alertas y aplicar prioridad
+  if (valorCO > umbralCO || valorLPG > umbralLPG || valorMetano > umbralMetano) {
+    digitalWrite(relayPin, HIGH); // primero relay
+
+    // ===== BUZZER CORREGIDO: SONIDO CON TONE() =====
+    tone(buzzerPin, 2500); // tono de alarma (puede ajustarse)
+    // ===============================================
+
+    // finalmente LCD
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    if (valorCO > umbralCO) lcd.print("ALERTA CO");
+    else if (valorLPG > umbralLPG) lcd.print("ALERTA LPG");
+    else if (valorMetano > umbralMetano) lcd.print("ALERTA Metano");
+    lcd.setCursor(0, 1);
+    lcd.print("Evacue el area!");
+  } else if (preheatCompleto) {
+    // Todo en orden
+    digitalWrite(relayPin, LOW);
+
+    // ===== BUZZER CORREGIDO: APAGA CON noTone() =====
+    noTone(buzzerPin);
+    // =================================================
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Todo en orden :D");
+    lcd.setCursor(0, 1);
+    lcd.print("Monitoreando...");
+  }
+
+  delay(200); // pequeño retardo para no saturar I2C y Serial
+}
