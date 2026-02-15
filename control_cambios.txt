@@ -1,0 +1,59 @@
+CONTROL DE VERSIONES DEL PROYECTO
+---------------------------------------------------------------------------------------
+Versión 1.0
+Fecha: 29 de octubre de 2025
+
+Descripción de cambios:
+En esta versión se desarrolló e implementó el código funcional inicial del sistema detector de gases tóxicos.
+
+Se integraron los siguientes elementos:
+
+- Lectura de sensores de Monóxido de Carbono (CO) y Gas.
+- Establecimiento de umbrales de seguridad para detección de peligro.
+- Activación automática de relé al detectar niveles altos.
+- Activación de buzzer como alerta sonora.
+- Visualización de estados y alertas en pantalla LCD I2C.
+- Monitoreo de valores en tiempo real mediante el monitor serial.
+
+Motivo de la versión:
+
+Contar con un primer prototipo funcional capaz de detectar concentraciones peligrosas de gases y emitir alertas visuales y sonoras para pruebas del sistema.
+
+---------------------------------------------------------------------------------------------------------------------------
+
+Versión 2.0
+Fecha: 15 de Febrero de 2026
+
+Descripción de cambios:
+En esta versión se realizó una actualización mayor del sistema detector de gases tóxicos, ampliando su capacidad de monitoreo y mejorando la lógica de funcionamiento.
+
+Se integraron y programaron los siguientes elementos:
+
+- Implementación de tres sensores de gas:
+  • MQ7 → Monóxido de Carbono (CO)
+  • MQ6 → Gas LP (LPG)
+  • MQ4 → Metano
+
+- Control independiente de heaters mediante MOSFET para cada sensor.
+- Programación de ciclo de calentamiento especializado para el sensor MQ7:
+  • 60 segundos en alto voltaje.
+  • 90 segundos en voltaje reducido por PWM.
+  • Reinicio automático del ciclo.
+
+- Sistema de precalentamiento general de sensores durante 60 segundos antes de iniciar mediciones.
+- Lectura de valores analógicos únicamente después del precalentamiento para evitar mediciones erróneas.
+- Implementación de umbrales de seguridad para cada tipo de gas.
+- Activación de relé como prioridad principal al detectar niveles peligrosos.
+- Activación de alarma sonora mediante buzzer usando la función tone().
+- Corrección de apagado del buzzer utilizando noTone().
+- Visualización de alertas y estados del sistema en pantalla LCD I2C:
+  • Tipo de gas detectado.
+  • Mensaje de evacuación.
+  • Estado normal de monitoreo.
+
+- Monitoreo en tiempo real a través del monitor serial mostrando concentraciones de gases.
+
+Motivo de la versión:
+Mejorar la precisión, seguridad y confiabilidad del sistema, integrando múltiples sensores, control térmico adecuado y un sistema de alertamiento escalonado (visual, sonoro y eléctrico) para pruebas funcionales del prototipo.
+
+------------------------------------------------------------------------------------------------------------------------------------
