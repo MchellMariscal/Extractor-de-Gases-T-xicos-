@@ -1,0 +1,137 @@
+#include <Wire.h>                // Librería para comunicación I2C (necesaria para el LCD)
+#include <LiquidCrystal_I2C.h>    // Librería específica para controlar la pantalla LCD I2C
+
+// Configuración de la pantalla LCD: dirección 0x27, 16 columnas y 2 filas
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// --- DEFINICIÓN DE PINES ANALÓGICOS (Lectura de niveles de gas) ---
+const int mq7Pin = A0;  // Monóxido de Carbono (CO)
+const int mq6Pin = A1;  // Gas Licuado de Petróleo (LPG)
+const int mq4Pin = A2;  // Metano (Gas Natural)
+const int mq2Pin = A3;  // Humo y Gases Inflamables
+
+// --- DEFINICIÓN DE PINES DIGITALES (Control de calentadores vía MOSFET) ---
+const int heaterMQ7 = 7;   // Controla el ciclo de calor del MQ-7 (requiere cambios de voltaje)
+const int heaterMQ6 = 10;  // Controla calor constante para MQ-6
+const int heaterMQ4 = 11;  // Controla calor constante para MQ-4
+const int heaterMQ2 = 6;   // Controla calor constante para MQ-2
+
+// --- PINES DE SALIDA PARA ACTUADORES ---
+const int buzzerPin = 8;   // Pin para la bocina/alarma (usa la función tone)
+const int relayPin  = 9;   // Pin para activar el relé (ventilador, válvula, etc.)
+
+// --- UMBRALES DE DISPARO (Ajustan la sensibilidad de la alarma) ---
+const int umbralCO     = 200; // Si la lectura supera 200, hay alerta de CO
+const int umbralLPG    = 200; // Si supera 200, hay alerta de gas LP
+const int umbralMetano = 200; // Si supera 200, hay alerta de metano
+const int umbralHumo   = 300; // Si supera 300, hay alerta de humo (MQ-2 es más sensible)
+
+// --- VARIABLES DE CONTROL DE TIEMPO (Para no usar delay y no congelar el código) ---
+unsigned long tiempoInicioMQ7 = 0;    // Almacena cuándo inició el ciclo del MQ-7
+unsigned long tiempoInicioPreheat = 0; // Almacena cuándo encendió el sistema
+bool preheatCompleto = false;         // Bandera para saber si los sensores ya están calientes
+
+void setup() {
+  Serial.begin(9600); // Inicia comunicación con la PC para ver datos en el monitor serie
+
+  // Configura los pines de los calentadores y actuadores como salidas
+  pinMode(heaterMQ7, OUTPUT);
+  pinMode(heaterMQ6, OUTPUT);
+  pinMode(heaterMQ4, OUTPUT);
+  pinMode(heaterMQ2, OUTPUT);
+  pinMode(buzzerPin, OUTPUT);
+  pinMode(relayPin,  OUTPUT);
+
+  // Asegura que todo inicie apagado por seguridad
+  digitalWrite(relayPin, LOW);
+  noTone(buzzerPin);
+
+  // Inicialización de la pantalla LCD
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("SISTEMA ACTIVO");
+  lcd.setCursor(0, 1);
+  lcd.print("Precalentando...");
+
+  // Encendido inicial de todos los sensores (todos a 5V para empezar a calentar)
+  digitalWrite(heaterMQ7, HIGH);
+  digitalWrite(heaterMQ6, HIGH);
+  digitalWrite(heaterMQ4, HIGH);
+  digitalWrite(heaterMQ2, HIGH);
+
+  // Guardamos el tiempo actual para las comparaciones futuras
+  tiempoInicioPreheat = millis();
+  tiempoInicioMQ7 = millis();
+}
+
+void loop() {
+  unsigned long ahora = millis(); // Captura el tiempo actual en cada vuelta del loop
+
+  // --- 1. GESTIÓN DEL PRECALENTAMIENTO (60 segundos iniciales) ---
+  if (!preheatCompleto && ahora - tiempoInicioPreheat >= 60000) { 
+    preheatCompleto = true; // El sistema ya es confiable para leer
+    lcd.clear();
+    // Mantenemos encendidos los que funcionan a 5V fijos
+    digitalWrite(heaterMQ6, HIGH);
+    digitalWrite(heaterMQ4, HIGH);
+    digitalWrite(heaterMQ2, HIGH);
+  }
+
+  // --- 2. CICLO OBLIGATORIO DEL MQ-7 (Cambio de voltaje) ---
+  // El MQ-7 necesita 60s a 5V para "limpiarse" y 90s a 1.4V para "medir"
+  unsigned long elapsedMQ7 = ahora - tiempoInicioMQ7;
+  if (elapsedMQ7 < 60000) {
+    digitalWrite(heaterMQ7, HIGH); // Fase de alta temperatura (5V)
+  } else if (elapsedMQ7 < 150000) {
+    analogWrite(heaterMQ7, 56);    // Fase de medición (aprox 1.4V usando PWM)
+  } else {
+    tiempoInicioMQ7 = ahora;       // Reinicia el ciclo de 150 segundos totales
+  }
+
+  // --- 3. LECTURA DE DATOS ANALÓGICOS ---
+  int vCO = 0, vLPG = 0, vMet = 0, vHumo = 0;
+  
+  if (preheatCompleto) { // Solo lee si ya pasó el minuto de precalentamiento
+    vCO   = analogRead(mq7Pin);  // Lee valor de 0 a 1023
+    vLPG  = analogRead(mq6Pin);
+    vMet  = analogRead(mq4Pin);
+    vHumo = analogRead(mq2Pin);
+  }
+
+  // --- 4. ENVÍO DE DATOS AL MONITOR SERIE (Para depuración) ---
+  Serial.print("CO:"); Serial.print(vCO);
+  Serial.print(" | LPG:"); Serial.print(vLPG);
+  Serial.print(" | Met:"); Serial.print(vMet);
+  Serial.print(" | Humo:"); Serial.println(vHumo);
+
+  // --- 5. LÓGICA DE ALARMAS Y PRIORIDADES ---
+  // Si cualquier sensor supera su umbral, se activa la alerta
+  if (preheatCompleto && (vCO > umbralCO || vLPG > umbralLPG || vMet > umbralMetano || vHumo > umbralHumo)) {
+    
+    digitalWrite(relayPin, HIGH); // Enciende el relé (ej. extractor de aire)
+    tone(buzzerPin, 2500);        // Genera un sonido de 2.5kHz en el buzzer
+
+    lcd.setCursor(0, 0);
+    lcd.print("!!! PELIGRO !!! ");
+    lcd.setCursor(0, 1);
+
+    // Muestra en pantalla qué gas causó la alarma (Prioriza el humo)
+    if (vHumo > umbralHumo)      lcd.print("HUMO / FUEGO    ");
+    else if (vCO > umbralCO)     lcd.print("MONOXIDO (CO)   ");
+    else if (vLPG > umbralLPG)   lcd.print("FUGA DE GAS LPG ");
+    else if (vMet > umbralMetano) lcd.print("GAS METANO      ");
+
+  } else if (preheatCompleto) {
+    // --- ESTADO DE REPOSO (Todo normal) ---
+    digitalWrite(relayPin, LOW);  // Apaga el relé
+    noTone(buzzerPin);            // Silencia el buzzer
+
+    lcd.setCursor(0, 0);
+    lcd.print("ESTADO: NORMAL  ");
+    lcd.setCursor(0, 1);
+    lcd.print("SISTEMA OK      ");
+  }
+
+  delay(500); // Espera medio segundo antes de la siguiente lectura para no saturar el LCD
+}
